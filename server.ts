@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 
+import { createServer } from "http";
+import { Server } from "socket.io";
 import prom from "@isaacs/express-prometheus-middleware";
 import { createRequestHandler } from "@remix-run/express";
 import type { ServerBuild } from "@remix-run/node";
@@ -20,6 +22,10 @@ async function run() {
   const BUILD_PATH = path.resolve("build/index.js");
   const VERSION_PATH = path.resolve("build/version.txt");
 
+  const app = express();
+  const httpServer = createServer(app);
+  const io = new Server(httpServer);
+
   const initialBuild = await reimportServer();
   const remixHandler =
     process.env.NODE_ENV === "development"
@@ -27,9 +33,25 @@ async function run() {
       : createRequestHandler({
           build: initialBuild,
           mode: initialBuild.mode,
+          getLoadContext: () => ({
+            io,
+          }),
         });
 
-  const app = express();
+  io.on("connection", (socket) => {
+    // from this point you are on the WS connection with a specific client
+    console.log(socket.id, "connected");
+
+    socket.emit("confirmation", "connected!");
+    console.log("JOINING USER", socket.handshake.auth.userId);
+    socket.join(socket.handshake.auth.userId);
+
+    socket.on("event", (data) => {
+      console.log(socket.id, data);
+      socket.emit("event", "pong");
+    });
+  });
+
   const metricsApp = express();
   app.use(
     prom({
@@ -101,7 +123,7 @@ async function run() {
   app.all("*", remixHandler);
 
   const port = process.env.PORT || 3000;
-  app.listen(port, () => {
+  httpServer.listen(port, () => {
     console.log(`✅ app ready: http://localhost:${port}`);
 
     if (process.env.NODE_ENV === "development") {
@@ -154,6 +176,9 @@ async function run() {
         return createRequestHandler({
           build,
           mode: "development",
+          getLoadContext: () => ({
+            io,
+          }),
         })(req, res, next);
       } catch (error) {
         next(error);
