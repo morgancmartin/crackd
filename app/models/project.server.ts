@@ -1,7 +1,5 @@
 import type { User, Project, Message, FileVersion, MessageType } from "@prisma/client";
 import { InputJsonObject } from "@prisma/client/runtime/library";
-import { exec } from "child_process";
-import { promisify } from "util";
 import { defaultFiles } from "./fileversion.server";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
@@ -10,8 +8,6 @@ import _ from "lodash";
 import { listFilesTool, readFileTool, projectAnswerTool, projectUpdateTool } from "~/tools/project.tools";
 
 import { prisma } from "~/db.server";
-
-const execPromise = promisify(exec);
 
 export function getProject({
   id,
