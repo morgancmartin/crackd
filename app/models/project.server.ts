@@ -263,6 +263,7 @@ export async function updateProjectFiles({
   type AnswerResponse = {
     files: Array<{ path: string; content: string }>;
     explanation: string;
+    preliminaryResponse?: string;
   };
 
   // Get the most recent message's fileVersion
@@ -318,10 +319,14 @@ export async function updateProjectFiles({
     type: "USER",
   });
 
-  // Create a follow-up message with the explanation
+  // Create a follow-up message with the explanation, including preliminaryResponse if it exists
+  const combinedExplanation = response.preliminaryResponse 
+    ? `${response.preliminaryResponse}\n\n${response.explanation}`
+    : response.explanation;
+
   return await createProjectMessage({
     projectId: project.id,
-    contents: response.explanation,
+    contents: combinedExplanation,
     type: "SYSTEM",
     files: updatedFiles,
   });
