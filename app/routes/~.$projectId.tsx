@@ -7,6 +7,7 @@ import {
 } from "@remix-run/react";
 import invariant from "tiny-invariant";
 import type { Message as ProjectMessage, User, Project } from "@prisma/client";
+import { PiExportBold, PiCloudArrowUpBold, PiRocketLaunchBold } from "react-icons/pi";
 import { getProject, updateProjectTitle, updateProjectFiles } from "~/models/project.server";
 import { requireUserId } from "~/session.server";
 import MarkdownRenderer from "~/components/markdownRenderer";
@@ -14,6 +15,7 @@ import { useOptionalUser } from "~/utils";
 import { useProject } from "~/hooks/useProject";
 import { AppDisplay } from "~/components/AppDisplay";
 import { ProjectTitle } from "~/components/ProjectTitle";
+import { Button } from "~/components/ui/button";
 
 export const headers: HeadersFunction = () => ({
   "Cross-Origin-Embedder-Policy": "credentialless",
@@ -96,8 +98,30 @@ export default function ProjectDetailsPage() {
 
   return (
     <div className="flex h-full min-h-screen w-full flex-col overflow-y-hidden bg-[#080808]">
-      <ProjectTitle title={project.title} />
-      <div className="relative flex h-full w-full flex-1 overflow-y-scroll pb-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-[#171717] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-500 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400 pb-48">
+      <div className="grid grid-cols-3 items-center px-12 border-b border-gray-800">
+        <div className="col-start-1"></div>
+        <div className="flex justify-center">
+          <ProjectTitle title={project.title} />
+        </div>
+        <div className="flex items-center justify-end gap-4">
+          <Button variant="secondary" size="sm">
+            <PiExportBold />
+            Export
+          </Button>
+          <Button variant="secondary" size="sm">
+            <PiCloudArrowUpBold />
+            Connect to Supabase
+          </Button>
+          <Button variant="secondary" size="sm">
+            <PiRocketLaunchBold />
+            Deploy
+          </Button>
+        </div>
+      </div>
+      <div 
+        className="relative flex h-full w-full flex-1 overflow-y-scroll pb-4 pb-48 scrollbar-thin scrollbar-track-[#171717] scrollbar-thumb-gray-500 scrollbar-thumb-rounded-full scrollbar-thumb:bg-gray-400 scrollbar-hover:bg-gray-300"
+        style={{ scrollbarWidth: 'auto' }}
+      >
         <Messages messages={project.messages} />
         <div className="fixed bottom-0 left-0 h-40 w-[30%] flex-col justify-center gap-0 px-12">
           <div className="h-[85%] w-full bg-transparent">
@@ -118,7 +142,7 @@ export default function ProjectDetailsPage() {
           </div>
           <div className="h-[15%] w-full bg-black"></div>
         </div>
-        <div className="fixed right-0 flex h-[888px] w-[70%] items-end justify-end overflow-y-hidden pb-4 pr-4">
+        <div className="fixed right-0 flex h-[888px] w-[70%] items-end justify-end overflow-y-hidden pb-4 mr-4">
           <AppDisplay files={files} />
         </div>
       </div>

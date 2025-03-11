@@ -26,7 +26,7 @@ export function ProjectTitle({ title }: ProjectTitleProps) {
   };
 
   return (
-    <div className="flex h-[54px] items-center justify-center border-b pb-2">
+    <div className="flex h-[54px] items-center justify-center pb-2">
       <h3 className="text-sm font-medium text-white">
         {title}
       </h3>
