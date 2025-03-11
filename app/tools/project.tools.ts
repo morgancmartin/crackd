@@ -1,13 +1,12 @@
 import { z } from "zod";
 import { tool } from "ai";
 
-export const listFilesTool = tool({
+export const getListFilesTool = (currentFiles: any) => tool({
   description: "List all files in the project's current version",
   parameters: z.object({
     path: z.string().optional(),
-    currentFiles: z.any(),
   }),
-  execute: async ({ currentFiles }) => {
+  execute: async () => {
     const paths: string[] = [];
     function traverseFiles(obj: any, prefix = '') {
       if (obj.file?.contents) {
@@ -23,13 +22,12 @@ export const listFilesTool = tool({
   },
 });
 
-export const readFileTool = tool({
+export const getReadFileTool = (currentFiles: any) => tool({
   description: "Read the contents of a file from the project's current version",
   parameters: z.object({
     path: z.string(),
-    currentFiles: z.any(),
   }),
-  execute: async ({ path, currentFiles }) => {
+  execute: async ({ path }) => {
     const parts = path.split('/');
     let current: any = currentFiles;
     
@@ -51,6 +49,7 @@ export const readFileTool = tool({
 export const projectAnswerTool = tool({
   description: "A tool for providing a response",
   parameters: z.object({
+    preliminaryResponse: z.string(),
     file: z.string(),
     overview: z.string(),
   }),
@@ -59,6 +58,7 @@ export const projectAnswerTool = tool({
 export const projectUpdateTool = tool({
   description: "A tool for providing the final response with updated files",
   parameters: z.object({
+    preliminaryResponse: z.string(),
     files: z.array(z.object({
       path: z.string(),
       content: z.string(),

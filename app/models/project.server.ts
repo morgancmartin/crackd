@@ -5,7 +5,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
 import { DirectoryNode } from "@webcontainer/api";
 import _ from "lodash";
-import { listFilesTool, readFileTool, projectAnswerTool, projectUpdateTool } from "~/tools/project.tools";
+import { getListFilesTool, getReadFileTool, projectAnswerTool, projectUpdateTool } from "~/tools/project.tools";
 
 import { prisma } from "~/db.server";
 
@@ -176,7 +176,8 @@ export async function getInitialProject({ prompt }: { prompt: string }) {
 
   const files = _.cloneDeep(defaultFiles);
 
-  const { file, overview } = toolCalls[0].args;
+  const { file, overview, preliminaryResponse } = toolCalls[0].args;
+  const combinedOverview = preliminaryResponse ? `${preliminaryResponse}\n\n${overview}` : overview;
 
   if ((files.directory.src as DirectoryNode).directory) {
     (files.directory.src as DirectoryNode).directory["App.tsx"] = {
@@ -186,7 +187,7 @@ export async function getInitialProject({ prompt }: { prompt: string }) {
 
   return {
     files,
-    overview,
+    overview: combinedOverview,
   };
 }
 
@@ -282,8 +283,8 @@ export async function updateProjectFiles({
   const { toolCalls } = await generateText({
     model: anthropic("claude-3-7-sonnet-20250219"),
     tools: {
-      listFiles: listFilesTool,
-      readFile: readFileTool,
+      listFiles: getListFilesTool(currentFiles),
+      readFile: getReadFileTool(currentFiles),
       answer: projectUpdateTool,
     },
     maxSteps: 10,
