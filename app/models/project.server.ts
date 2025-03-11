@@ -1,13 +1,13 @@
-import type { User, Project, Message, FileVersion } from "@prisma/client";
+import type { User, Project, Message, FileVersion, MessageType } from "@prisma/client";
 import { InputJsonObject } from "@prisma/client/runtime/library";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { defaultFiles } from "./fileversion.server";
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateText, tool } from "ai";
+import { generateText } from "ai";
 import { DirectoryNode } from "@webcontainer/api";
 import _ from "lodash";
-import { z } from "zod";
+import { listFilesTool, readFileTool, projectAnswerTool, projectUpdateTool } from "~/tools/project.tools";
 
 import { prisma } from "~/db.server";
 
@@ -156,13 +156,7 @@ export async function getInitialProject({ prompt }: { prompt: string }) {
   const { toolCalls } = await generateText({
     model: anthropic("claude-3-7-sonnet-20250219"),
     tools: {
-      answer: tool({
-        description: "A tool for providing a response",
-        parameters: z.object({
-          file: z.string(),
-          overview: z.string(),
-        }),
-      }),
+      answer: projectAnswerTool,
     },
     toolChoice: "required",
     system: `
@@ -227,5 +221,111 @@ export function updateProjectTitle({
         },
       },
     },
+  });
+}
+
+function updateFileStructure(currentFiles: InputJsonObject, updates: Array<{ path: string; content: string }>) {
+  const updatedFiles = _.cloneDeep(currentFiles);
+  
+  for (const { path, content } of updates) {
+    const parts = path.split('/');
+    let current: any = updatedFiles;
+    
+    // Navigate to parent directory
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (!current.directory) {
+        current.directory = {};
+      }
+      if (!current.directory[part]) {
+        current.directory[part] = { directory: {} };
+      }
+      current = current.directory[part];
+    }
+    
+    // Update or create the file
+    const fileName = parts[parts.length - 1];
+    if (!current.directory) {
+      current.directory = {};
+    }
+    current.directory[fileName] = {
+      file: { contents: content }
+    };
+  }
+
+  return updatedFiles;
+}
+
+export async function updateProjectFiles({
+  prompt,
+  project,
+}: {
+  prompt: string;
+  project: Project;
+}) {
+  type AnswerResponse = {
+    files: Array<{ path: string; content: string }>;
+    explanation: string;
+  };
+
+  // Get the most recent message's fileVersion
+  const latestMessage = await prisma.message.findFirst({
+    where: { projectId: project.id },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      fileVersion: {
+        select: {
+          files: true,
+        },
+      },
+    },
+  });
+
+  const currentFiles = latestMessage?.fileVersion?.files as InputJsonObject || {};
+
+  const { toolCalls } = await generateText({
+    model: anthropic("claude-3-7-sonnet-20250219"),
+    tools: {
+      listFiles: listFilesTool,
+      readFile: readFileTool,
+      answer: projectUpdateTool,
+    },
+    maxSteps: 10,
+    toolChoice: "required",
+    system: `
+    You are an expert javascript/typescript engineer ai.
+    
+    You are given a project and a prompt requesting changes. Your task is to:
+    1. Use listFiles and readFile to understand the current project structure
+    2. Determine which files need to be modified based on the prompt
+    3. Return the updated file contents and an explanation of changes
+    
+    Be thoughtful and precise with your changes. Maintain existing code style and patterns.
+    Ensure all changes are compatible with the existing codebase.
+    `,
+    prompt: `Project ID: ${project.id}
+    Change Request: ${prompt}
+    
+    Please analyze the project and make the requested changes.`,
+  });
+
+  const response = toolCalls[0].args as AnswerResponse;
+
+  // Update the files with the changes
+  const updatedFiles = updateFileStructure(currentFiles, response.files);
+
+  // Create a new message with the updated files and return the complete project
+  const updatedProject = await createProjectMessage({
+    projectId: project.id,
+    contents: prompt,
+    type: "USER",
+  });
+
+  // Create a follow-up message with the explanation
+  return await createProjectMessage({
+    projectId: project.id,
+    contents: response.explanation,
+    type: "SYSTEM",
+    files: updatedFiles,
   });
 }

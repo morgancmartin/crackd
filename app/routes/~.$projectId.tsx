@@ -3,10 +3,11 @@ import {
   isRouteErrorResponse,
   useLoaderData,
   useRouteError,
+  useSubmit,
 } from "@remix-run/react";
 import invariant from "tiny-invariant";
-import type { Message as ProjectMessage, User } from "@prisma/client";
-import { getProject, updateProjectTitle } from "~/models/project.server";
+import type { Message as ProjectMessage, User, Project } from "@prisma/client";
+import { getProject, updateProjectTitle, updateProjectFiles } from "~/models/project.server";
 import { requireUserId } from "~/session.server";
 import MarkdownRenderer from "~/components/markdownRenderer";
 import { useOptionalUser } from "~/utils";
@@ -25,18 +26,41 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
   const formData = await request.formData();
   const title = formData.get("title");
+  const contents = formData.get("contents");
 
-  if (typeof title !== "string") {
-    return { error: "Title must be a string" };
+  if (title) {
+    if (typeof title !== "string") {
+      return { error: "Title must be a string" };
+    }
+
+    const project = await updateProjectTitle({
+      id: params.projectId,
+      userId,
+      title,
+    });
+
+    return { project };
   }
 
-  const project = await updateProjectTitle({
-    id: params.projectId,
-    userId,
-    title,
-  });
+  if (contents) {
+    if (typeof contents !== "string") {
+      return { error: "Contents must be a string" };
+    }
 
-  return { project };
+    const project = await getProject({ id: params.projectId, userId });
+    if (!project) {
+      throw new Response("Not Found", { status: 404 });
+    }
+
+    const updatedProject = await updateProjectFiles({
+      prompt: contents,
+      project: project as unknown as Project,
+    });
+
+    return { project: updatedProject };
+  }
+
+  return { error: "No valid action specified" };
 };
 
 export const loader = async ({ params, request }: LoaderFunctionArgs) => {
@@ -56,6 +80,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
 export default function ProjectDetailsPage() {
   const data = useLoaderData<typeof loader>();
   const user = useOptionalUser();
+  const submit = useSubmit();
   const { project, files, isConnected } = useProject(data.project, user as User);
 
   if (!project) {
@@ -72,13 +97,23 @@ export default function ProjectDetailsPage() {
   return (
     <div className="flex h-full min-h-screen w-full flex-col overflow-y-hidden bg-[#080808]">
       <ProjectTitle title={project.title} />
-      <div className="relative flex h-full w-full flex-1 overflow-y-scroll pb-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-[#171717] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-500 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400">
-        <Messages messages={project.messages} user={user as User} />
+      <div className="relative flex h-full w-full flex-1 overflow-y-scroll pb-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-[#171717] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-500 hover:[&::-webkit-scrollbar-thumb]:bg-gray-400 pb-48">
+        <Messages messages={project.messages} />
         <div className="fixed bottom-0 left-0 h-40 w-[30%] flex-col justify-center gap-0 px-12">
           <div className="h-[85%] w-full bg-transparent">
             <textarea
+              name="contents"
               placeholder="How can Crackd help you today?"
               className="h-full w-full resize-none rounded-lg border border-gray-700 bg-[#171717cc] bg-opacity-90 p-4 text-sm text-white backdrop-blur-md focus:outline-none"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  const form = new FormData();
+                  form.append("contents", e.currentTarget.value);
+                  submit(form, { method: "post" });
+                  e.currentTarget.value = "";
+                }
+              }}
             ></textarea>
           </div>
           <div className="h-[15%] w-full bg-black"></div>
@@ -93,15 +128,13 @@ export default function ProjectDetailsPage() {
 
 function Messages({
   messages,
-  user,
 }: {
   messages: Array<Pick<ProjectMessage, "id" | "contents" | "type">>;
-  user: User;
 }) {
   return (
     <div className="flex size-max w-[30%] flex-col gap-4 px-12 pt-4">
       {messages.map((message) => (
-        <Message key={message.id} message={message} user={user} />
+        <Message key={message.id} message={message} />
       ))}
     </div>
   );
@@ -109,16 +142,16 @@ function Messages({
 
 function Message({
   message,
-  user,
 }: {
   message: Pick<ProjectMessage, "id" | "contents" | "type">;
-  user: User;
 }) {
+  const user = useOptionalUser();
+
   return (
-    <div className="rounded-lg bg-[#1F2122] p-4 text-white">
+    <div className="rounded-lg bg-[#1F2122] p-6 py-5 text-white">
       <div className="flex items-start gap-3">
-        {message.type === "USER" && (
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-700 text-sm font-medium text-white overflow-hidden">
+        {message.type === "USER" && user && (
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-700 text-sm font-medium text-white overflow-hidden shrink-0">
             {user.picture ? (
               <img src={user.picture} alt={user.givenName || 'User'} className="h-full w-full object-cover" />
             ) : (
@@ -126,7 +159,7 @@ function Message({
             )}
           </div>
         )}
-        <span className="flex-1">
+        <span className="flex-1 py-1">
           <MarkdownRenderer markdown={message.contents} />
         </span>
       </div>
