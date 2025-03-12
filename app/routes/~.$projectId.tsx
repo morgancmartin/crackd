@@ -4,7 +4,9 @@ import {
   useLoaderData,
   useRouteError,
   useSubmit,
+  Link,
 } from "@remix-run/react";
+import { useEffect } from "react";
 import invariant from "tiny-invariant";
 import type { Message as ProjectMessage, User, Project } from "@prisma/client";
 import { PiExportBold, PiCloudArrowUpBold, PiRocketLaunchBold } from "react-icons/pi";
@@ -99,7 +101,11 @@ export default function ProjectDetailsPage() {
   return (
     <div className="flex h-full min-h-screen w-full flex-col overflow-y-hidden bg-[#080808]">
       <div className="grid grid-cols-3 items-center px-12 border-b border-gray-800">
-        <div className="col-start-1"></div>
+        <div className="col-start-1">
+          <Link to="/" reloadDocument className="text-white text-xl font-bold hover:text-gray-300 transition-colors">
+            Crackd
+          </Link>
+        </div>
         <div className="flex justify-center">
           <ProjectTitle title={project.title} />
         </div>
@@ -177,7 +183,7 @@ function Message({
         {message.type === "USER" && user && (
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-700 text-sm font-medium text-white overflow-hidden shrink-0">
             {user.picture ? (
-              <img src={user.picture} alt={user.givenName || 'User'} className="h-full w-full object-cover" />
+              <img src={user.picture} alt={user.givenName || 'User'} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
             ) : (
               <span>{(user.givenName?.[0] || 'U').toUpperCase()}</span>
             )}

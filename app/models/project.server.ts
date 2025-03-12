@@ -2,12 +2,17 @@ import type { User, Project, Message, FileVersion, MessageType } from "@prisma/c
 import { InputJsonObject } from "@prisma/client/runtime/library";
 import { defaultFiles } from "./fileversion.server";
 import { anthropic } from "@ai-sdk/anthropic";
+import { createDeepSeek } from "@ai-sdk/deepseek";
 import { generateText } from "ai";
 import { DirectoryNode } from "@webcontainer/api";
 import _ from "lodash";
 import { getListFilesTool, getReadFileTool, projectAnswerTool, projectUpdateTool } from "~/tools/project.tools";
 
 import { prisma } from "~/db.server";
+
+const deepseek = createDeepSeek({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+});
 
 export function getProject({
   id,
@@ -282,7 +287,8 @@ export async function updateProjectFiles({
   const currentFiles = latestMessage?.fileVersion?.files as InputJsonObject || {};
 
   const { toolCalls } = await generateText({
-    model: anthropic("claude-3-7-sonnet-20250219"),
+    // model: anthropic("claude-3-7-sonnet-20250219"),
+    model: deepseek("deepseek-chat"),
     tools: {
       listFiles: getListFilesTool(currentFiles),
       readFile: getReadFileTool(currentFiles),
@@ -297,6 +303,7 @@ export async function updateProjectFiles({
     1. Use listFiles and readFile to understand the current project structure
     2. Determine which files need to be modified based on the prompt
     3. Return the updated file contents and an explanation of changes
+    4. It is completely fine to update multiple files at once.
     
     Be thoughtful and precise with your changes. Maintain existing code style and patterns.
     Ensure all changes are compatible with the existing codebase.
