@@ -48,17 +48,21 @@ async function startContainer({
   iframeEl,
   webcontainerInstance,
   setDevProcess,
+  doInstall = true,
 }: {
   files: FileSystemTree;
   iframeEl: HTMLIFrameElement;
   webcontainerInstance: WebContainer;
   setDevProcess: (process: WebContainerProcess) => void;
+  doInstall?: boolean;
 }) {
   await webcontainerInstance.mount(files);
-  console.log("installing dependencies");
-  const exitCode = await installDependencies(webcontainerInstance);
-  if (exitCode !== 0) {
-    throw new Error("Installation failed");
+  if (doInstall) {
+    console.log("installing dependencies");
+    const exitCode = await installDependencies(webcontainerInstance);
+    if (exitCode !== 0) {
+      throw new Error("Installation failed");
+    }
   }
   console.log("starting dev server");
   const process = await startDevServer(webcontainerInstance, iframeEl);
@@ -121,6 +125,7 @@ export function useWebContainer({ files, iframeRef }: UseWebContainerProps) {
         iframeEl: iframeRef.current,
         webcontainerInstance,
         setDevProcess,
+        doInstall: false,
       });
     } finally {
       setIsRefreshing(false);
