@@ -1,18 +1,57 @@
 import React, { useEffect, useState } from "react";
 import type { MetaFunction } from "@remix-run/node";
 import { ActionFunction, redirect } from "@remix-run/node";
-import { Link, Form, useActionData } from "@remix-run/react";
+import { Form } from "@remix-run/react";
 import {
   createProjectWithMessage,
-  getInitialProject,
+  getInitialAppTsx,
   createProjectMessage,
+  generatePreliminaryResponse,
 } from "../models/project.server";
 import { defaultFiles } from "~/models/fileversion.server";
-import { prisma } from "~/db.server";
-import type { Message, Prisma } from "@prisma/client";
-
 import { useOptionalUser } from "~/utils";
 import { InputJsonObject } from "@prisma/client/runtime/library";
+
+async function getInitialProject({ 
+  projectId, 
+  prompt, 
+  userId, 
+  io 
+}: { 
+  projectId: string;
+  prompt: string;
+  userId: string;
+  io: any;
+}) {
+  const prelimResponse = await generatePreliminaryResponse({ prompt });
+  if (!prelimResponse) return;
+
+  // First create the preliminary response message
+  const projectWithPrelim = await createProjectMessage({
+    projectId,
+    contents: prelimResponse,
+    type: "SYSTEM",
+  });
+  console.log("EMITTING PRELIMINARY RESPONSE", prelimResponse);
+  io.to(userId).emit("project:update", { project: projectWithPrelim });
+
+  // Then generate the file and overview using the preliminary response
+  const result = await getInitialAppTsx({ 
+    prompt,
+    preliminaryResponse: prelimResponse 
+  });
+  
+  if (result.overview) {
+    const projectWithApp = await createProjectMessage({
+      projectId,
+      contents: result.overview,
+      type: "SYSTEM",
+      files: result.files as unknown as InputJsonObject,
+    });
+    console.log("EMITTING FILE AND OVERVIEW", userId);
+    io.to(userId).emit("project:update", { project: projectWithApp });
+  }
+}
 
 export const meta: MetaFunction = () => [{ title: "Remix Notes" }];
 
@@ -38,19 +77,7 @@ export const action: ActionFunction = async ({ request, context }) => {
     });
 
     // Start AI generation and message creation in background
-    getInitialProject({ prompt: text }).then((result) => {
-      if (result.overview) {
-        createProjectMessage({
-          projectId: project.id,
-          contents: result.overview,
-          type: "SYSTEM",
-          files: result.files as unknown as InputJsonObject,
-        }).then((updatedProject) => {
-          console.log("EMITTING PROJECT UPDATE", userId);
-          (io as any).to(userId).emit("project_update", { project: updatedProject });
-        });
-      }
-    });
+    getInitialProject({ projectId: project.id, prompt: text, userId, io });
 
     return redirect(`/~/${project.id}`);
   } catch (error) {
@@ -62,7 +89,6 @@ export const action: ActionFunction = async ({ request, context }) => {
 export default function Index() {
   const user = useOptionalUser();
   const [text, setText] = useState("");
-  const actionData = useActionData();
 
   useEffect(() => {
     if (user) {

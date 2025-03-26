@@ -41,7 +41,14 @@ export function useProject(initialProject: ProjectData, user: User) {
   // Handle socket updates
   useEffect(() => {
     if (socket && isConnected) {
-      (socket as any).on("project_update", (data: any) => {
+      (socket as any).on("project:update", (data: any) => {
+        console.log("[Project Update]", new Date().toISOString());
+        console.log("Received project data:", {
+          id: data.project?.id,
+          title: data.project?.title,
+          messageCount: data.project?.messages?.length
+        });
+        
         if (data.project) {
           setProject(data.project);
           setFiles(

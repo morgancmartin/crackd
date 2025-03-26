@@ -15,5 +15,6 @@ module.exports = {
     "@oslojs/jwt",
     "remix-auth/strategy",
     "@webcontainer/api",
+    "@ai-sdk/google",
   ],
 };

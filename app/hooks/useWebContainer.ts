@@ -76,6 +76,7 @@ export function useWebContainer({ files, iframeRef }: UseWebContainerProps) {
   const [devProcess, setDevProcess] = useState<WebContainerProcess | null>(
     null,
   );
+  const [hasStarted, setHasStarted] = useState(false);
 
   useEffect(() => {
     if (iframeRef.current) {
@@ -100,7 +101,7 @@ export function useWebContainer({ files, iframeRef }: UseWebContainerProps) {
   }, []);
 
   useEffect(() => {
-    if (webcontainerInstance && iframeRef.current) {
+    if (webcontainerInstance && iframeRef.current && !hasStarted) {
       console.log("STARTING CONTAINER", files);
       startContainer({
         files,
@@ -108,8 +109,16 @@ export function useWebContainer({ files, iframeRef }: UseWebContainerProps) {
         webcontainerInstance,
         setDevProcess,
       });
+      setHasStarted(true);
     }
-  }, [webcontainerInstance, files]);
+  }, [webcontainerInstance, files, hasStarted]);
+
+  useEffect(() => {
+    if (webcontainerInstance && files) {
+      console.log("MOUNTING FILES", files);
+      webcontainerInstance.mount(files);
+    }
+  }, [files]);
 
   const handleRefresh = async () => {
     if (!webcontainerInstance || !iframeRef.current || isRefreshing) return;

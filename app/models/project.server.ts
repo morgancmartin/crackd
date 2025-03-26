@@ -3,10 +3,10 @@ import { InputJsonObject } from "@prisma/client/runtime/library";
 import { defaultFiles } from "./fileversion.server";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createDeepSeek } from "@ai-sdk/deepseek";
-import { generateText } from "ai";
+import { generateObject, generateText } from "ai";
 import { DirectoryNode } from "@webcontainer/api";
 import _ from "lodash";
-import { getListFilesTool, getReadFileTool, projectAnswerTool, projectUpdateTool } from "~/tools/project.tools";
+import { getListFilesTool, getReadFileTool, projectAnswerSchema, projectUpdateTool } from "~/tools/project.tools";
 
 import { prisma } from "~/db.server";
 
@@ -153,36 +153,75 @@ export function createProjectMessage({
   });
 }
 
-export async function getInitialProject({ prompt }: { prompt: string }) {
-  const { toolCalls } = await generateText({
-    model: anthropic("claude-3-7-sonnet-20250219"),
-    tools: {
-      answer: projectAnswerTool,
-    },
-    toolChoice: "required",
-    system: `
-    You are an expert javascript/typescript engineer ai.
+export async function generatePreliminaryResponse({ prompt }: { prompt: string }) {
+  try {
+    const result = await generateText({
+      model: anthropic("claude-3-7-sonnet-20250219"),
+      system: `You are an expert javascript/typescript engineer ai.
+      Given a project prompt, provide a brief preliminary response (2-3 sentences) outlining your plan for the project.
+      The response should be in markdown format and conversational.
+      Keep it under 100 words.`,
+      prompt: `Provide a preliminary response for this project: ${prompt}`,
+    });
+    return result.text;
+  } catch (error) {
+    console.error("Error generating preliminary response:", error);
+    throw error;
+  }
+}
 
-    You are given a project prompt and are expected to generate an initial App.tsx for a typescript vite
-    project along with an overview of the file's features, design choices, etc in a conversational format as a response to the prompt.
+export async function getInitialAppTsx({ 
+  prompt,
+  preliminaryResponse 
+}: { 
+  prompt: string;
+  preliminaryResponse: string;
+}) {
+  let object;
+  
+  try {
+    const result = await generateObject({
+      model: anthropic("claude-3-7-sonnet-20250219"),
+      schema: projectAnswerSchema,
+      providerOptions: {
+        anthropic: {
+          maxTokens: 3000,
+        },
+      },
+      system: `
+      You are an expert javascript/typescript engineer ai.
 
-    The overview should be in markdown format. It should not have a title header, it should just jump straight away into a conversational format.
+      You are given a project prompt and a preliminary response outlining the plan. You are expected to generate two responses:
+       - an initial App.tsx for a typescript vite project that implements the plan,
+       - and an overview of the generated App.tsx file's features, design choices, etc in a conversational format as a response to the prompt.
 
-    Include only the contents of the App.tsx file, no commentary, no delimiters.
+      The overview should be in markdown format. It should not have a title header, it should just jump straight away into a conversational format.
 
-    Do not import any libraries (beyond base React) or styles. Assume tailwind.
+      For the initial App.tsx file:
+      - Do not import any libraries (beyond base React) or styles. Assume tailwind.
+      - Do not reference non-existent media files. Direct urls are encouraged.
+      - Be creative and imaginative. Gradient backgrounds, animations, emojis and other design elements are strongly recommended.
 
-    Do not reference non-existent media files. Direct urls are encouraged.
-
-    Be creative and imaginative. Gradient backgrounds, animations, emojis and other design elements are strongly recommended.
-  `,
-    prompt: `Return a project according to the prompt. prompt: ${prompt}`,
-  });
+      Ensure your response conforms to the zod schema:
+      z.object({
+        file: z.string(),
+        overview: z.string(),
+      })
+      `,
+      prompt: `Project prompt: ${prompt}
+      Preliminary plan: ${preliminaryResponse}
+      
+      Return a schema-compliant initial project response according to the prompt and plan.`,
+    });
+    object = result.object;
+  } catch (error) {
+    console.error("Error generating initial project:", error);
+    throw error;
+  }
 
   const files = _.cloneDeep(defaultFiles);
 
-  const { file, overview, preliminaryResponse } = toolCalls[0].args;
-  const combinedOverview = preliminaryResponse ? `${preliminaryResponse}\n\n${overview}` : overview;
+  const { file, overview } = object;
 
   if ((files.directory.src as DirectoryNode).directory) {
     (files.directory.src as DirectoryNode).directory["App.tsx"] = {
@@ -192,7 +231,7 @@ export async function getInitialProject({ prompt }: { prompt: string }) {
 
   return {
     files,
-    overview: combinedOverview,
+    overview,
   };
 }
 
@@ -223,118 +262,5 @@ export function updateProjectTitle({
         },
       },
     },
-  });
-}
-
-function updateFileStructure(currentFiles: InputJsonObject, updates: Array<{ path: string; content: string }>) {
-  const updatedFiles = _.cloneDeep(currentFiles);
-  
-  for (const { path, content } of updates) {
-    const parts = path.split('/');
-    let current: any = updatedFiles;
-    
-    // Navigate to parent directory
-    for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i];
-      if (!current.directory) {
-        current.directory = {};
-      }
-      if (!current.directory[part]) {
-        current.directory[part] = { directory: {} };
-      }
-      current = current.directory[part];
-    }
-    
-    // Update or create the file
-    const fileName = parts[parts.length - 1];
-    if (!current.directory) {
-      current.directory = {};
-    }
-    current.directory[fileName] = {
-      file: { contents: content }
-    };
-  }
-
-  return updatedFiles;
-}
-
-export async function updateProjectFiles({
-  prompt,
-  project,
-}: {
-  prompt: string;
-  project: Project;
-}) {
-  type AnswerResponse = {
-    files: Array<{ path: string; content: string }>;
-    explanation: string;
-    preliminaryResponse?: string;
-  };
-
-  // Get the most recent message's fileVersion
-  const latestMessage = await prisma.message.findFirst({
-    where: { projectId: project.id },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      fileVersion: {
-        select: {
-          files: true,
-        },
-      },
-    },
-  });
-
-  const currentFiles = latestMessage?.fileVersion?.files as InputJsonObject || {};
-
-  const { toolCalls } = await generateText({
-    // model: anthropic("claude-3-7-sonnet-20250219"),
-    model: deepseek("deepseek-chat"),
-    tools: {
-      listFiles: getListFilesTool(currentFiles),
-      readFile: getReadFileTool(currentFiles),
-      answer: projectUpdateTool,
-    },
-    maxSteps: 10,
-    toolChoice: "required",
-    system: `
-    You are an expert javascript/typescript engineer ai.
-    
-    You are given a project and a prompt requesting changes. Your task is to:
-    1. Use listFiles and readFile to understand the current project structure
-    2. Determine which files need to be modified based on the prompt
-    3. Return the updated file contents and an explanation of changes
-    4. It is completely fine to update multiple files at once.
-    
-    Be thoughtful and precise with your changes. Maintain existing code style and patterns.
-    Ensure all changes are compatible with the existing codebase.
-    `,
-    prompt: `Project ID: ${project.id}
-    Change Request: ${prompt}
-    
-    Please analyze the project and make the requested changes.`,
-  });
-
-  const response = toolCalls[0].args as AnswerResponse;
-
-  // Update the files with the changes
-  const updatedFiles = updateFileStructure(currentFiles, response.files);
-
-  // Create a new message with the updated files and return the complete project
-  const updatedProject = await createProjectMessage({
-    projectId: project.id,
-    contents: prompt,
-    type: "USER",
-  });
-
-  // Create a follow-up message with the explanation, including preliminaryResponse if it exists
-  const combinedExplanation = response.preliminaryResponse 
-    ? `${response.preliminaryResponse}\n\n${response.explanation}`
-    : response.explanation;
-
-  return await createProjectMessage({
-    projectId: project.id,
-    contents: combinedExplanation,
-    type: "SYSTEM",
-    files: updatedFiles,
   });
 }

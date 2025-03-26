@@ -5,12 +5,13 @@ import {
   useRouteError,
   useSubmit,
   Link,
+  useParams,
 } from "@remix-run/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import invariant from "tiny-invariant";
-import type { Message as ProjectMessage, User, Project } from "@prisma/client";
+import type { User } from "@prisma/client";
 import { PiExportBold, PiCloudArrowUpBold, PiRocketLaunchBold } from "react-icons/pi";
-import { getProject, updateProjectTitle, updateProjectFiles } from "~/models/project.server";
+import { getProject, updateProjectTitle } from "~/models/project.server";
 import { requireUserId } from "~/session.server";
 import MarkdownRenderer from "~/components/markdownRenderer";
 import { useOptionalUser } from "~/utils";
@@ -18,6 +19,7 @@ import { useProject } from "~/hooks/useProject";
 import { AppDisplay } from "~/components/AppDisplay";
 import { ProjectTitle } from "~/components/ProjectTitle";
 import { Button } from "~/components/ui/button";
+import { useChat } from "@ai-sdk/react";
 
 export const headers: HeadersFunction = () => ({
   "Cross-Origin-Embedder-Policy": "credentialless",
@@ -30,7 +32,6 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
   const formData = await request.formData();
   const title = formData.get("title");
-  const contents = formData.get("contents");
 
   if (title) {
     if (typeof title !== "string") {
@@ -44,24 +45,6 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     });
 
     return { project };
-  }
-
-  if (contents) {
-    if (typeof contents !== "string") {
-      return { error: "Contents must be a string" };
-    }
-
-    const project = await getProject({ id: params.projectId, userId });
-    if (!project) {
-      throw new Response("Not Found", { status: 404 });
-    }
-
-    const updatedProject = await updateProjectFiles({
-      prompt: contents,
-      project: project as unknown as Project,
-    });
-
-    return { project: updatedProject };
   }
 
   return { error: "No valid action specified" };
@@ -86,6 +69,16 @@ export default function ProjectDetailsPage() {
   const user = useOptionalUser();
   const submit = useSubmit();
   const { project, files, isConnected } = useProject(data.project, user as User);
+  const params = useParams();
+  const { messages, input, handleInputChange, handleSubmit } = useChat({
+    api: "/api/chat",
+    onFinish: (message) => {
+      // Handle any post-message actions if needed
+    },
+    body: {
+      projectId: params.projectId,
+    },
+  });
 
   if (!project) {
     return (
@@ -125,26 +118,31 @@ export default function ProjectDetailsPage() {
         </div>
       </div>
       <div 
-        className="relative flex h-full w-full flex-1 overflow-y-scroll pb-4 pb-48 scrollbar-thin scrollbar-track-[#171717] scrollbar-thumb-gray-500 scrollbar-thumb-rounded-full scrollbar-thumb:bg-gray-400 scrollbar-hover:bg-gray-300"
+        className="relative flex flex-col h-full w-full flex-1 overflow-y-scroll pb-4 pb-48 scrollbar-thin scrollbar-track-[#171717] scrollbar-thumb-gray-500 scrollbar-thumb-rounded-full scrollbar-thumb:bg-gray-400 scrollbar-hover:bg-gray-300"
         style={{ scrollbarWidth: 'auto' }}
       >
-        <Messages messages={project.messages} />
+        <Messages messages={messages} />
         <div className="fixed bottom-0 left-0 h-40 w-[30%] flex-col justify-center gap-0 px-12">
           <div className="h-[85%] w-full bg-transparent">
-            <textarea
-              name="contents"
-              placeholder="How can Crackd help you today?"
-              className="h-full w-full resize-none rounded-lg border border-gray-700 bg-[#171717cc] bg-opacity-90 p-4 text-sm text-white backdrop-blur-md focus:outline-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  const form = new FormData();
-                  form.append("contents", e.currentTarget.value);
-                  submit(form, { method: "post" });
-                  e.currentTarget.value = "";
-                }
-              }}
-            ></textarea>
+            <form onSubmit={handleSubmit} className="h-full w-full">
+              <textarea
+                value={input}
+                onChange={handleInputChange}
+                name="contents"
+                placeholder="How can Crackd help you today?"
+                className="resize-none rounded-lg border border-gray-700 bg-[#171717cc] bg-opacity-90 p-4 text-sm text-white backdrop-blur-md focus:outline-none h-full w-full"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    const form = new FormData();
+                    form.append("contents", e.currentTarget.value);
+                    form.append("projectId", params.projectId || "");
+                    // submit(form, { method: "post" });
+                    handleSubmit(e);
+                  }
+                }}
+              ></textarea>
+            </form>
           </div>
           <div className="h-[15%] w-full bg-black"></div>
         </div>
@@ -159,13 +157,36 @@ export default function ProjectDetailsPage() {
 function Messages({
   messages,
 }: {
-  messages: Array<Pick<ProjectMessage, "id" | "contents" | "type">>;
+  messages: Array<{ id: string; content: string; role: string }>;
 }) {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const data = useLoaderData<typeof loader>();
+  const user = useOptionalUser();
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, data.project.messages]);
+
   return (
     <div className="flex size-max w-[30%] flex-col gap-4 px-12 pt-4">
+      {data.project.messages.map((message) => (
+        <Message 
+          key={message.id} 
+          message={{
+            id: message.id,
+            content: message.contents,
+            role: message.type === "USER" ? "user" : "assistant"
+          }} 
+        />
+      ))}
       {messages.map((message) => (
         <Message key={message.id} message={message} />
       ))}
+      <div ref={messagesEndRef} />
     </div>
   );
 }
@@ -173,14 +194,14 @@ function Messages({
 function Message({
   message,
 }: {
-  message: Pick<ProjectMessage, "id" | "contents" | "type">;
+  message: { id: string; content: string; role: string };
 }) {
   const user = useOptionalUser();
 
   return (
     <div className="rounded-lg bg-[#1F2122] p-6 py-5 text-white">
       <div className="flex items-start gap-3">
-        {message.type === "USER" && user && (
+        {message.role === "user" && user && (
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-700 text-sm font-medium text-white overflow-hidden shrink-0">
             {user.picture ? (
               <img src={user.picture} alt={user.givenName || 'User'} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
@@ -190,7 +211,7 @@ function Message({
           </div>
         )}
         <span className="flex-1 py-1">
-          <MarkdownRenderer markdown={message.contents} />
+          <MarkdownRenderer markdown={message.content} />
         </span>
       </div>
     </div>
