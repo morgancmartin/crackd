@@ -1,18 +1,18 @@
-import type { User, Project, Message, FileVersion, MessageType } from "@prisma/client";
-import { InputJsonObject } from "@prisma/client/runtime/library";
-import { defaultFiles } from "./fileversion.server";
-import { anthropic } from "@ai-sdk/anthropic";
-import { createDeepSeek } from "@ai-sdk/deepseek";
-import { generateObject, generateText } from "ai";
-import { DirectoryNode } from "@webcontainer/api";
-import _ from "lodash";
-import { getListFilesTool, getReadFileTool, projectAnswerSchema, projectUpdateTool } from "~/tools/project.tools";
+// Prisma and WebContainer type definitions
+import type { User, Project, Message } from "@prisma/client";
+import type { InputJsonObject, InputJsonValue } from "@prisma/client/runtime/library";
+import type { DirectoryNode } from "@webcontainer/api";
 
+// External services and APIs
 import { prisma } from "~/db.server";
+import { anthropic } from "@ai-sdk/anthropic";
+import { generateObject, generateText } from "ai";
 
-const deepseek = createDeepSeek({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-});
+// Internal utilities and helpers
+import _ from "lodash";
+import { FileSystemTree, profile } from "~/lib/chat";
+import { projectAnswerSchema } from "~/tools/project.tools";
+import { defaultFiles } from "./fileversion.server";
 
 export function getProject({
   id,
@@ -23,6 +23,7 @@ export function getProject({
   return prisma.project.findFirst({
     select: {
       id: true,
+      userId: true,
       title: true,
       user: {
         select: {
@@ -70,11 +71,11 @@ export async function generateTitle({ prompt }: { prompt: string }) {
 export async function createProjectWithMessage({
   userId,
   messageContents,
-  files,
+  files = defaultFiles as unknown as InputJsonObject,
 }: {
   userId: User["id"];
   messageContents: Message["contents"];
-  files: InputJsonObject;
+  files?: InputJsonObject;
 }) {
   const title = await generateTitle({ prompt: messageContents });
 
@@ -89,11 +90,24 @@ export async function createProjectWithMessage({
       messages: {
         create: {
           contents: messageContents,
+          fileVersion: {
+            create: {
+              files,
+            },
+          },
         },
       },
     },
     include: {
-      messages: true,
+      messages: {
+        include: {
+          fileVersion: {
+            select: {
+              files: true,
+            },
+          },
+        },
+      },
     },
   });
 }
@@ -262,5 +276,75 @@ export function updateProjectTitle({
         },
       },
     },
+  });
+}
+
+export async function createProjectUpdateMessages(
+  projectId: string,
+  prompt: string,
+  updatedFiles: FileSystemTree,
+  explanation: string,
+  isInitialGeneration: boolean = false
+) {
+  if (!isInitialGeneration) {
+    const userMessage = await prisma.message.create({
+      data: {
+        contents: prompt,
+        type: "USER",
+        project: {
+          connect: {
+            id: projectId
+          }
+        },
+        fileVersion: {
+          create: {
+            files: updatedFiles as unknown as InputJsonValue,
+          },
+        },
+      },
+    });
+  }
+
+  const assistantMessage = await prisma.message.create({
+    data: {
+      contents: explanation,
+      type: "SYSTEM",
+      project: {
+        connect: {
+          id: projectId
+        }
+      },
+      fileVersion: {
+        create: {
+          files: updatedFiles as unknown as InputJsonValue,
+        },
+      },
+    },
+  });
+}
+
+export async function getCurrentProjectFiles(projectId: string): Promise<FileSystemTree> {
+  return profile("getCurrentProjectFiles", async () => {
+    console.log("🔍 Fetching project files for projectId:", projectId);
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            fileVersion: {
+              select: {
+                files: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const currentFiles = (project?.messages[0]?.fileVersion?.files || {}) as FileSystemTree;
+    console.log("📁 Retrieved files:", Object.keys(currentFiles).length, "files found");
+    return currentFiles;
   });
 }

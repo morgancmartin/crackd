@@ -43,11 +43,7 @@ export function useProject(initialProject: ProjectData, user: User) {
     if (socket && isConnected) {
       (socket as any).on("project:update", (data: any) => {
         console.log("[Project Update]", new Date().toISOString());
-        console.log("Received project data:", {
-          id: data.project?.id,
-          title: data.project?.title,
-          messageCount: data.project?.messages?.length
-        });
+        console.log("Received project data:", data);
         
         if (data.project) {
           setProject(data.project);

@@ -77,7 +77,7 @@ export const action: ActionFunction = async ({ request, context }) => {
     });
 
     // Start AI generation and message creation in background
-    getInitialProject({ projectId: project.id, prompt: text, userId, io });
+    // getInitialProject({ projectId: project.id, prompt: text, userId, io });
 
     return redirect(`/~/${project.id}`);
   } catch (error) {

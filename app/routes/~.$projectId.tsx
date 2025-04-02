@@ -1,4 +1,9 @@
-import type { LoaderFunctionArgs, HeadersFunction, ActionFunctionArgs } from "@remix-run/node";
+// External libraries
+import type {
+  LoaderFunctionArgs,
+  HeadersFunction,
+  ActionFunctionArgs,
+} from "@remix-run/node";
 import {
   isRouteErrorResponse,
   useLoaderData,
@@ -6,20 +11,30 @@ import {
   useSubmit,
   Link,
   useParams,
+  useFetcher,
 } from "@remix-run/react";
-import { useEffect, useRef } from "react";
-import invariant from "tiny-invariant";
 import type { User } from "@prisma/client";
+import { useEffect, useRef, useCallback } from "react";
+import invariant from "tiny-invariant";
 import { PiExportBold, PiCloudArrowUpBold, PiRocketLaunchBold } from "react-icons/pi";
+import { useChat } from "@ai-sdk/react";
+
+// Internal modules
 import { getProject, updateProjectTitle } from "~/models/project.server";
 import { requireUserId } from "~/session.server";
-import MarkdownRenderer from "~/components/markdownRenderer";
 import { useOptionalUser } from "~/utils";
 import { useProject } from "~/hooks/useProject";
+
+// Components
+import MarkdownRenderer from "~/components/markdownRenderer";
 import { AppDisplay } from "~/components/AppDisplay";
 import { ProjectTitle } from "~/components/ProjectTitle";
 import { Button } from "~/components/ui/button";
-import { useChat } from "@ai-sdk/react";
+
+// Function to generate a random 16-character string
+function generateRandomId() {
+  return Math.random().toString(36).substring(2, 18);
+}
 
 export const headers: HeadersFunction = () => ({
   "Cross-Origin-Embedder-Policy": "credentialless",
@@ -68,17 +83,87 @@ export default function ProjectDetailsPage() {
   const data = useLoaderData<typeof loader>();
   const user = useOptionalUser();
   const submit = useSubmit();
-  const { project, files, isConnected } = useProject(data.project, user as User);
+  const fetcher = useFetcher();
+  const { project, files, isConnected } = useProject(
+    data.project,
+    user as User,
+  );
   const params = useParams();
-  const { messages, input, handleInputChange, handleSubmit } = useChat({
-    api: "/api/chat",
-    onFinish: (message) => {
-      // Handle any post-message actions if needed
-    },
-    body: {
+  const hasProcessedInitialMessage = useRef(false);
+  const { messages, input, handleInputChange, handleSubmit, setInput } =
+    useChat({
+      api: "/api/chat",
+      onFinish: (message) => {
+        // Handle any post-message actions if needed
+      },
+      body: {
+        projectId: params.projectId,
+      },
+    });
+
+  // Add effect to handle initial USER message
+  useEffect(() => {
+    console.log("Effect running with:", {
+      hasProcessed: hasProcessedInitialMessage.current,
+      messageCount: project?.messages.length,
+      firstMessageType: project?.messages[0]?.type,
       projectId: params.projectId,
-    },
-  });
+    });
+
+    if (
+      !hasProcessedInitialMessage.current &&
+      project?.messages.length === 1 &&
+      project.messages[0].type === "USER"
+    ) {
+      console.log("Triggering initial message submission");
+      hasProcessedInitialMessage.current = true;
+
+      // Make direct API call to /api/chat with correct payload format
+      const payload = {
+        id: generateRandomId(),
+        messages: [
+          {
+            role: "user",
+            content: project.messages[0].contents,
+            parts: [
+              {
+                type: "text",
+                text: project.messages[0].contents,
+              },
+            ],
+          },
+        ],
+        projectId: params.projectId || "",
+      };
+
+      fetcher.submit(payload, {
+        method: "post",
+        action: "/api/chat",
+        encType: "application/json",
+      });
+    } else {
+      const reason = hasProcessedInitialMessage.current
+        ? "already processed"
+        : project?.messages.length !== 1
+          ? "not exactly one message"
+          : project?.messages[0]?.type !== "USER"
+            ? "not a USER message"
+            : "unknown";
+
+      console.log("Skipping form submission:", { reason });
+
+      if (reason === "not exactly one message") {
+        console.log(
+          "Current messages:",
+          project?.messages.map((m) => ({
+            id: m.id,
+            type: m.type,
+            contents: m.contents,
+          })),
+        );
+      }
+    }
+  }, [project?.messages, fetcher, params.projectId]);
 
   if (!project) {
     return (
@@ -93,9 +178,13 @@ export default function ProjectDetailsPage() {
 
   return (
     <div className="flex h-full min-h-screen w-full flex-col overflow-y-hidden bg-[#080808]">
-      <div className="grid grid-cols-3 items-center px-12 border-b border-gray-800">
+      <div className="grid grid-cols-3 items-center border-b border-gray-800 px-12">
         <div className="col-start-1">
-          <Link to="/" reloadDocument className="text-white text-xl font-bold hover:text-gray-300 transition-colors">
+          <Link
+            to="/"
+            reloadDocument
+            className="text-xl font-bold text-white transition-colors hover:text-gray-300"
+          >
             Crackd
           </Link>
         </div>
@@ -117,9 +206,9 @@ export default function ProjectDetailsPage() {
           </Button>
         </div>
       </div>
-      <div 
-        className="relative flex flex-col h-full w-full flex-1 overflow-y-scroll pb-4 pb-48 scrollbar-thin scrollbar-track-[#171717] scrollbar-thumb-gray-500 scrollbar-thumb-rounded-full scrollbar-thumb:bg-gray-400 scrollbar-hover:bg-gray-300"
-        style={{ scrollbarWidth: 'auto' }}
+      <div
+        className="scrollbar-thumb:bg-gray-400 relative flex h-full w-full flex-1 flex-col overflow-y-scroll pb-4 pb-48 scrollbar-thin scrollbar-track-[#171717] scrollbar-thumb-gray-500 scrollbar-thumb-rounded-full scrollbar-hover:bg-gray-300"
+        style={{ scrollbarWidth: "auto" }}
       >
         <Messages messages={messages} />
         <div className="fixed bottom-0 left-0 h-40 w-[30%] flex-col justify-center gap-0 px-12">
@@ -130,14 +219,10 @@ export default function ProjectDetailsPage() {
                 onChange={handleInputChange}
                 name="contents"
                 placeholder="How can Crackd help you today?"
-                className="resize-none rounded-lg border border-gray-700 bg-[#171717cc] bg-opacity-90 p-4 text-sm text-white backdrop-blur-md focus:outline-none h-full w-full"
+                className="h-full w-full resize-none rounded-lg border border-gray-700 bg-[#171717cc] bg-opacity-90 p-4 text-sm text-white backdrop-blur-md focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    const form = new FormData();
-                    form.append("contents", e.currentTarget.value);
-                    form.append("projectId", params.projectId || "");
-                    // submit(form, { method: "post" });
                     handleSubmit(e);
                   }
                 }}
@@ -146,7 +231,7 @@ export default function ProjectDetailsPage() {
           </div>
           <div className="h-[15%] w-full bg-black"></div>
         </div>
-        <div className="fixed right-0 flex h-[888px] w-[70%] items-end justify-end overflow-y-hidden pb-4 mr-4">
+        <div className="fixed right-0 mr-4 flex h-[888px] w-[70%] items-end justify-end overflow-y-hidden pb-4">
           <AppDisplay files={files} />
         </div>
       </div>
@@ -162,25 +247,38 @@ function Messages({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const data = useLoaderData<typeof loader>();
   const user = useOptionalUser();
+  const scrollTimeoutRef = useRef<NodeJS.Timeout>();
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const scrollToBottom = useCallback(() => {
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 100); // 100ms debounce
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, data.project.messages]);
+
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, [messages, data.project.messages, scrollToBottom]);
 
   return (
     <div className="flex size-max w-[30%] flex-col gap-4 px-12 pt-4">
       {data.project.messages.map((message) => (
-        <Message 
-          key={message.id} 
+        <Message
+          key={message.id}
           message={{
             id: message.id,
             content: message.contents,
-            role: message.type === "USER" ? "user" : "assistant"
-          }} 
+            role: message.type === "USER" ? "user" : "assistant",
+          }}
         />
       ))}
       {messages.map((message) => (
@@ -199,20 +297,25 @@ function Message({
   const user = useOptionalUser();
 
   return (
-    <div className="rounded-lg bg-[#1F2122] p-6 py-5 text-white">
+    <div className="rounded-lg bg-[#1F2122] p-6 pb-1 pt-5 text-white">
       <div className="flex items-start gap-3">
         {message.role === "user" && user && (
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-700 text-sm font-medium text-white overflow-hidden shrink-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-700 text-sm font-medium text-white">
             {user.picture ? (
-              <img src={user.picture} alt={user.givenName || 'User'} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+              <img
+                src={user.picture}
+                alt={user.givenName || "User"}
+                referrerPolicy="no-referrer"
+                className="h-full w-full object-cover"
+              />
             ) : (
-              <span>{(user.givenName?.[0] || 'U').toUpperCase()}</span>
+              <span>{(user.givenName?.[0] || "U").toUpperCase()}</span>
             )}
           </div>
         )}
-        <span className="flex-1 py-1">
+        <div className="min-w-0 flex-1 pt-1">
           <MarkdownRenderer markdown={message.content} />
-        </span>
+        </div>
       </div>
     </div>
   );
