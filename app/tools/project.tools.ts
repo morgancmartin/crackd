@@ -3,13 +3,16 @@ import { tool } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createDeepInfra } from "@ai-sdk/deepinfra";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { fetch } from "undici";
 import { FileSystemTree } from "~/lib/chat";
+import { tokenizeAndEstimateCost } from "llm-cost";
+import { streamText } from "ai";
 
-type ModelProvider = "openai" | "anthropic" | "deepinfra";
+type ModelProvider = "openai" | "anthropic" | "deepinfra" | "google";
 
 // Select which model provider to use
-const MODEL_PROVIDER: ModelProvider = "openai" as ModelProvider;
+const MODEL_PROVIDER: ModelProvider = "google" as ModelProvider;
 
 // Initialize the appropriate model based on the provider
 const model = (() => {
@@ -23,6 +26,11 @@ const model = (() => {
         apiKey: process.env.DEEPINFRA_API_KEY,
         baseURL: "https://api.deepinfra.com/v1",
         fetch: fetch as any
+      });
+    case "google":
+      return createGoogleGenerativeAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        fetch: fetch as any,
       });
   }
 })();
@@ -57,6 +65,9 @@ function getModelConfig({ maxTokens, useStructuredOutputs = true, modelVariant =
       if (maxTokens !== undefined) {
         providerOptions.deepinfra = { max_tokens: maxTokens };
       }
+      break;
+    case "google":
+      modelName = "gemini-2.5-pro-exp-03-25";
       break;
   }
 
@@ -121,9 +132,9 @@ export const getReadFileTool = (currentFiles: any) => tool({
     for (const path of paths) {
       try {
         const content = readFileContent(currentFiles, path);
-        const lines = content.split('\n');
-        const numberedLines = lines.map((line, index) => `${index + 1}: ${line}`);
-        results[path] = numberedLines.join('\n');
+        // const lines = content.split('\n');
+        // const numberedLines = lines.map((line, index) => `${index + 1}: ${line}`);
+        results[path] = content;
       } catch (error) {
         results[path] = `Error reading file: ${(error as Error).message}`;
       }
@@ -247,3 +258,72 @@ function updateFileContent(fileContents: string, oldCode: string, newCode: strin
 function addFileContent(fileContents: string, oldCode: string, newCode: string) {
   return fileContents.replace(oldCode, oldCode + '\n' + newCode);
 }
+
+export const getPreliminaryResponseTool = (dataStream: any) => tool({
+  description: "A tool for providing a preliminary response about the planned changes. Should be a simple text response, of two sentences indicating your plan to complete the user's request. Please conlude the sentences with two newlines.",
+  parameters: z.object({
+    response: z.string().describe("The preliminary response text to stream to the user"),
+  }),
+  execute: async ({ response }) => {
+    console.log('🎬 Preliminary response tool executing with response:', response);
+
+    response = `${response}\n\n`;
+    
+    // Write message ID (24 chars after msg-)
+    const messageId = "msg-" + Math.random().toString(36).substring(2, 26);
+    dataStream.write(`f:{"messageId":"${messageId}"}\n`);
+    
+    // Write response chunks
+    const chunks = response.match(/.{1,20}/g) || [response];
+    for (const chunk of chunks) {
+      dataStream.write(`0:"${chunk}"\n`);
+    }
+    
+    // Add some newlines after the response
+    // dataStream.write(`0:"\n\n"\n`);
+    
+    // Estimate tokens and write finish reason
+    const result = await tokenizeAndEstimateCost({
+      model: "gpt-4",
+      input: "",
+      output: response,
+    });
+    
+    dataStream.write(`e:{"finishReason":"stop","usage":{"promptTokens":0,"completionTokens":${result.outputTokens}},"isContinued":false}\n\n`);
+    
+    console.log('✅ Preliminary response tool completed');
+    return { success: true };
+  },
+});
+
+export const getConcludingResponseTool = (dataStream: any) => tool({
+  description: "A tool for providing a concluding response about the completed changes",
+  parameters: z.object({
+    response: z.string().describe("The concluding response text to stream to the user"),
+  }),
+  execute: async ({ response }) => {
+    console.log('🎬 Concluding response tool executing...');
+    
+    // Write message ID (24 chars after msg-)
+    const messageId = "msg-" + Math.random().toString(36).substring(2, 26);
+    dataStream.write(`f:{"messageId":"${messageId}"}\n`);
+    
+    // Write response chunks
+    const chunks = response.match(/.{1,20}/g) || [response];
+    for (const chunk of chunks) {
+      dataStream.write(`0:"${chunk}"\n`);
+    }
+    
+    // Estimate tokens and write finish reason
+    const result = await tokenizeAndEstimateCost({
+      model: "gpt-4",
+      input: "",
+      output: response,
+    });
+    
+    dataStream.write(`e:{"finishReason":"stop","usage":{"promptTokens":0,"completionTokens":${result.outputTokens}},"isContinued":false}\n\n`);
+    
+    console.log('✅ Concluding response tool completed');
+    return { success: true };
+  },
+});

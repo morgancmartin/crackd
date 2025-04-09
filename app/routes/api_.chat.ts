@@ -55,12 +55,13 @@ async function processChatResponse(
     console.log("🔄 Switching to complex model for project updates");
   }
 
-  const prelimResponse = await generatePreliminaryResponse(
-    messages,
-    prompt,
-    dataStream,
-  );
-  await dataStream.write(`0:${JSON.stringify("\n\n")}\n`);
+  // const prelimResponse = await generatePreliminaryResponse(
+    // messages,
+    // prompt,
+    // dataStream,
+  // );
+  const prelimResponse = "";
+  // await dataStream.write(`0:${JSON.stringify("\n\n")}\n`);
 
   const { files: updatedFiles, commentary } =
     await generateProjectUpdates(messages, currentFiles, prompt, dataStream, complexity);

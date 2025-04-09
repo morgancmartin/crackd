@@ -1,3 +1,4 @@
+// External package imports
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -5,13 +6,21 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createDeepInfra } from "@ai-sdk/deepinfra";
 import { generateText, streamText } from "ai";
 import { fetch } from "undici";
-import { performance } from "perf_hooks";
-import { DirectoryNode } from "@webcontainer/api";
 import _ from "lodash";
+
+// Node.js built-in imports
+import { performance } from "perf_hooks";
+
+// Type imports
+import { DirectoryNode } from "@webcontainer/api";
+
+// Local imports
 import {
   getListFilesTool,
   getReadFileTool,
   getUpdateFileTool,
+  getPreliminaryResponseTool,
+  getConcludingResponseTool,
 } from "~/tools/project.tools";
 
 export interface FileSystemTree {
@@ -71,13 +80,14 @@ export function getModelConfig({
       modelName = "gpt-4o";
       break;
     case "anthropic":
-      modelName = "claude-3-7-sonnet-20250219";
+      // modelName = "claude-3-7-sonnet-20250219";
+      modelName = "claude-3-5-sonnet-20241022";
       // if (maxTokens !== undefined) {
       // providerOptions.anthropic = { max_tokens: maxTokens };
       // }
       break;
     case "google":
-      modelName = "gemini-2.0-pro-exp-02-05";
+      modelName = "gemini-2.5-pro-exp-03-25";
       break;
     case "deepinfra":
       modelName = "Qwen/Qwen2.5-Coder-32B-Instruct";
@@ -217,18 +227,21 @@ export async function generateProjectUpdates(
           listFiles: getListFilesTool(clonedFiles),
           readFile: getReadFileTool(clonedFiles),
           updateFile: getUpdateFileTool(clonedFiles),
+          preliminaryResponse: getPreliminaryResponseTool(dataStream),
+          // concludingResponse: getConcludingResponseTool(dataStream),
         },
-        maxSteps: 5,
+        maxSteps: 7,
         system: `You are an AI code editor assistant with access to project files. You can:
 1. List files in the project structure
 2. Read file contents
 3. Update file contents
+4. Provide preliminary responses about planned changes (in markdown format)
+5. Provide concluding responses about completed changes
 
 Your task is to analyze the user's request and make appropriate changes to the project files. You should:
-- Understand the current project structure and file contents
-- Make precise, targeted updates to relevant files
-- Ensure changes are consistent and maintain code quality
-- Consider the broader project context when making changes
+1. First use listFiles and readFile to understand the project structure
+2. Provide a preliminary response about your planned changes in markdown format
+3. Make precise, targeted updates to relevant files
 
 When providing supplementary commentary in markdown format:
 - Do not use headers or section titles
@@ -239,7 +252,8 @@ You have access to the current file tree and can interact with files through the
         messages: [...messages, { role: "user", content: prompt }],
       });
 
-      result.mergeIntoDataStream(dataStream, { experimental_sendFinish: false });
+      // Comment out the dataStream merge since we're using the new response tools
+      // result.mergeIntoDataStream(dataStream, { experimental_sendFinish: false });
 
       for await (const part of result.fullStream) {
         switch (part.type) {
@@ -252,6 +266,49 @@ You have access to the current file tree and can interact with files through the
 
       const response = await result.response;
       const commentary: string[] = [];
+
+      console.log("RESPONSE MESSAGES", JSON.stringify(response.messages, null, 2));
+
+      const updateFileResults = response.messages
+        .filter((message) => message.role === "tool")
+        .map((message) => message.content)
+        .filter((content) => Array.isArray(content))
+        .flatMap((content) => 
+          content.filter((item) => 
+            typeof item === "object" && 
+            "type" in item && 
+            item.type === "tool-result" && 
+            item.toolName === "updateFile"
+          )
+        );
+
+      // Generate concluding response based on updateFileResults
+      const concludingResult = await streamText({
+        ...getModelConfig({ maxTokens: 200 }),
+        system: `You are an expert javascript/typescript engineer ai.
+        Given a list of file updates, provide a concise concluding response that summarizes the changes made.
+        The response should be conversational and direct, without any markdown formatting or lists.
+        Focus on the key changes and their impact.
+        Example: "I've updated the navigation component to include smooth transitions and improved accessibility."`,
+        messages: [
+          {
+            role: "user",
+            content: `Provide a concluding response for these file updates: ${JSON.stringify(updateFileResults)}`,
+          },
+        ],
+      });
+
+      const messageId = "msg-" + Math.random().toString(36).substring(2, 26);
+      dataStream.write(`f:{"messageId":"${messageId}"}\n`);
+      dataStream.write(`0: ${JSON.stringify("\n\n")}\n`);
+      dataStream.write(`e:{"finishReason":"stop","usage":{"promptTokens":2,"completionTokens":2},"isContinued":false}\n`);
+      concludingResult.mergeIntoDataStream(dataStream, { experimental_sendFinish: false });
+      const concludingResponse = await concludingResult.response;
+      const concludingText = Array.isArray(concludingResponse.messages[0].content)
+        ? concludingResponse.messages[0].content.find((item) => item.type === "text")?.text || ""
+        : concludingResponse.messages[0].content;
+      
+      commentary.push(concludingText);
 
       response.messages.forEach((message) => {
         if (

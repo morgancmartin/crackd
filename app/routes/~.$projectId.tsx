@@ -36,6 +36,145 @@ function generateRandomId() {
   return Math.random().toString(36).substring(2, 18);
 }
 
+// Custom hook for handling initial message
+function useInitialMessage(project: any, projectId: string | undefined) {
+  const hasProcessedInitialMessage = useRef(false);
+  const fetcher = useFetcher();
+
+  useEffect(() => {
+    console.log("Effect running with:", {
+      hasProcessed: hasProcessedInitialMessage.current,
+      messageCount: project?.messages.length,
+      firstMessageType: project?.messages[0]?.type,
+      projectId: projectId,
+    });
+
+    if (
+      !hasProcessedInitialMessage.current &&
+      project?.messages.length === 1 &&
+      project.messages[0].type === "USER"
+    ) {
+      console.log("Triggering initial message submission");
+      hasProcessedInitialMessage.current = true;
+
+      // Make direct API call to /api/chat with correct payload format
+      const payload = {
+        id: generateRandomId(),
+        messages: [
+          {
+            role: "user",
+            content: project.messages[0].contents,
+            parts: [
+              {
+                type: "text",
+                text: project.messages[0].contents,
+              },
+            ],
+          },
+        ],
+        projectId: projectId || "",
+      };
+
+      fetcher.submit(payload, {
+        method: "post",
+        action: "/api/chat",
+        encType: "application/json",
+      });
+    } else {
+      const reason = hasProcessedInitialMessage.current
+        ? "already processed"
+        : project?.messages.length !== 1
+          ? "not exactly one message"
+          : project?.messages[0]?.type !== "USER"
+            ? "not a USER message"
+            : "unknown";
+
+      console.log("Skipping form submission:", { reason });
+
+      if (reason === "not exactly one message") {
+        console.log(
+          "Current messages:",
+          project?.messages.map((m: { id: string; type: string; contents: string }) => ({
+            id: m.id,
+            type: m.type,
+            contents: m.contents,
+          })),
+        );
+      }
+    }
+  }, [project?.messages, fetcher, projectId]);
+}
+
+// Alternative hook that simulates user interaction with the textarea
+function useAltInitialMessage(project: any, projectId: string | undefined, textareaRef: React.RefObject<HTMLTextAreaElement>, setInput: (value: string) => void) {
+  const hasProcessedInitialMessage = useRef(false);
+
+  useEffect(() => {
+    // Add a small delay to ensure everything is initialized
+    const timeoutId = setTimeout(() => {
+      console.log("Effect running with:", {
+        hasProcessed: hasProcessedInitialMessage.current,
+        messageCount: project?.messages.length,
+        firstMessageType: project?.messages[0]?.type,
+        projectId: projectId,
+        project: project,
+      });
+
+      if (
+        !hasProcessedInitialMessage.current &&
+        project?.messages.length === 1 &&
+        project.messages[0].type === "USER"
+      ) {
+        console.log("Triggering initial message submission");
+        hasProcessedInitialMessage.current = true;
+
+        // Set the input value to the initial message
+        setInput(project.messages[0].contents);
+
+        // Use setTimeout to ensure the input value is set before simulating the enter key
+        setTimeout(() => {
+          if (textareaRef.current) {
+            // Create and dispatch an Enter key event
+            const enterEvent = new KeyboardEvent('keydown', {
+              key: 'Enter',
+              code: 'Enter',
+              keyCode: 13,
+              which: 13,
+              bubbles: true,
+              cancelable: true
+            });
+            console.log("Dispatching Enter key event");
+            textareaRef.current.dispatchEvent(enterEvent);
+          }
+        }, 0);
+      } else {
+        const reason = hasProcessedInitialMessage.current
+          ? "already processed"
+          : project?.messages.length !== 1
+            ? "not exactly one message"
+            : project?.messages[0]?.type !== "USER"
+              ? "not a USER message"
+              : "unknown";
+
+        console.log("Skipping form submission:", { reason });
+
+        if (reason === "not exactly one message") {
+          console.log(
+            "Current messages:",
+            project?.messages.map((m: { id: string; type: string; contents: string }) => ({
+              id: m.id,
+              type: m.type,
+              contents: m.contents,
+            })),
+          );
+        }
+      }
+    }, 100); // Add a 100ms delay to ensure everything is initialized
+
+    return () => clearTimeout(timeoutId);
+  }, [project?.messages, projectId, setInput, textareaRef]);
+}
+
 export const headers: HeadersFunction = () => ({
   "Cross-Origin-Embedder-Policy": "credentialless",
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -83,13 +222,12 @@ export default function ProjectDetailsPage() {
   const data = useLoaderData<typeof loader>();
   const user = useOptionalUser();
   const submit = useSubmit();
-  const fetcher = useFetcher();
+  const params = useParams();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { project, files, isConnected } = useProject(
     data.project,
     user as User,
   );
-  const params = useParams();
-  const hasProcessedInitialMessage = useRef(false);
   const { messages, input, handleInputChange, handleSubmit, setInput } =
     useChat({
       api: "/api/chat",
@@ -101,69 +239,11 @@ export default function ProjectDetailsPage() {
       },
     });
 
-  // Add effect to handle initial USER message
-  useEffect(() => {
-    console.log("Effect running with:", {
-      hasProcessed: hasProcessedInitialMessage.current,
-      messageCount: project?.messages.length,
-      firstMessageType: project?.messages[0]?.type,
-      projectId: params.projectId,
-    });
-
-    if (
-      !hasProcessedInitialMessage.current &&
-      project?.messages.length === 1 &&
-      project.messages[0].type === "USER"
-    ) {
-      console.log("Triggering initial message submission");
-      hasProcessedInitialMessage.current = true;
-
-      // Make direct API call to /api/chat with correct payload format
-      const payload = {
-        id: generateRandomId(),
-        messages: [
-          {
-            role: "user",
-            content: project.messages[0].contents,
-            parts: [
-              {
-                type: "text",
-                text: project.messages[0].contents,
-              },
-            ],
-          },
-        ],
-        projectId: params.projectId || "",
-      };
-
-      fetcher.submit(payload, {
-        method: "post",
-        action: "/api/chat",
-        encType: "application/json",
-      });
-    } else {
-      const reason = hasProcessedInitialMessage.current
-        ? "already processed"
-        : project?.messages.length !== 1
-          ? "not exactly one message"
-          : project?.messages[0]?.type !== "USER"
-            ? "not a USER message"
-            : "unknown";
-
-      console.log("Skipping form submission:", { reason });
-
-      if (reason === "not exactly one message") {
-        console.log(
-          "Current messages:",
-          project?.messages.map((m) => ({
-            id: m.id,
-            type: m.type,
-            contents: m.contents,
-          })),
-        );
-      }
-    }
-  }, [project?.messages, fetcher, params.projectId]);
+  // Original implementation using direct API call
+  // useInitialMessage(project, params.projectId);
+  
+  // Alternative implementation using textarea simulation
+  useAltInitialMessage(project, params.projectId, textareaRef, setInput);
 
   if (!project) {
     return (
@@ -215,6 +295,7 @@ export default function ProjectDetailsPage() {
           <div className="h-[85%] w-full bg-transparent">
             <form onSubmit={handleSubmit} className="h-full w-full">
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={handleInputChange}
                 name="contents"
@@ -223,6 +304,7 @@ export default function ProjectDetailsPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
+                    console.log("ENTER KEY PRESSED", e);
                     handleSubmit(e);
                   }
                 }}
@@ -269,9 +351,12 @@ function Messages({
     };
   }, [messages, data.project.messages, scrollToBottom]);
 
+  // If there's only one message, don't display it
+  const shouldShowMessages = data.project.messages.length > 1;
+
   return (
     <div className="flex size-max w-[30%] flex-col gap-4 px-12 pt-4">
-      {data.project.messages.map((message) => (
+      {shouldShowMessages && data.project.messages.map((message) => (
         <Message
           key={message.id}
           message={{
